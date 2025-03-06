@@ -1,0 +1,74 @@
+2025-02-17 15:59:51,124 - __main__ - INFO - Starting WhatsApp Chatbot Service...
+2025-02-17 15:59:51,126 - database_service - ERROR - Database connection failed: Textual SQL expression 'SELECT 1' should be explicitly declared as text('SELECT 1')
+Traceback (most recent call last):
+  File "C:\Users\wynn.jr\Desktop\Project\wppconnect-server-main\database_service.py", line 19, in _setup_database
+    session.execute("SELECT 1")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "C:\Python313\Lib\site-packages\sqlalchemy\orm\session.py", line 2365, in execute
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        _add_event=_add_event,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python313\Lib\site-packages\sqlalchemy\orm\session.py", line 2149, in _execute_internal
+    statement = coercions.expect(roles.StatementRole, statement)
+  File "C:\Python313\Lib\site-packages\sqlalchemy\sql\coercions.py", line 395, in expect
+    resolved = impl._literal_coercion(
+        element, argname=argname, **kw
+    )
+  File "C:\Python313\Lib\site-packages\sqlalchemy\sql\coercions.py", line 621, in _literal_coercion
+    return self._text_coercion(element, argname, **kw)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\site-packages\sqlalchemy\sql\coercions.py", line 614, in _text_coercion
+    return _no_text_coercion(element, argname)
+  File "C:\Python313\Lib\site-packages\sqlalchemy\sql\coercions.py", line 584, in _no_text_coercion
+    raise exc_cls(
+    ...<7 lines>...
+    ) from err
+sqlalchemy.exc.ArgumentError: Textual SQL expression 'SELECT 1' should be explicitly declared as text('SELECT 1')
+2025-02-17 15:59:51,145 - __main__ - ERROR - Fatal error in main loop: Textual SQL expression 'SELECT 1' should be explicitly declared as text('SELECT 1')
+Traceback (most recent call last):
+  File "C:\Users\wynn.jr\Desktop\Project\wppconnect-server-main\main.py", line 28, in main
+    chatbot_service = ChatBotService()
+  File "C:\Users\wynn.jr\Desktop\Project\wppconnect-server-main\chatbot.py", line 79, in __init__
+    self.chatbot = ChatBot()
+                   ~~~~~~~^^
+  File "C:\Users\wynn.jr\Desktop\Project\wppconnect-server-main\chatbot.py", line 16, in __init__
+    self.db = DatabaseService()
+              ~~~~~~~~~~~~~~~^^
+  File "C:\Users\wynn.jr\Desktop\Project\wppconnect-server-main\database_service.py", line 13, in __init__
+    self._setup_database()
+    ~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\wynn.jr\Desktop\Project\wppconnect-server-main\database_service.py", line 19, in _setup_database
+    session.execute("SELECT 1")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "C:\Python313\Lib\site-packages\sqlalchemy\orm\session.py", line 2365, in execute
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        _add_event=_add_event,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Python313\Lib\site-packages\sqlalchemy\orm\session.py", line 2149, in _execute_internal
+    statement = coercions.expect(roles.StatementRole, statement)
+  File "C:\Python313\Lib\site-packages\sqlalchemy\sql\coercions.py", line 395, in expect
+    resolved = impl._literal_coercion(
+        element, argname=argname, **kw
+    )
+  File "C:\Python313\Lib\site-packages\sqlalchemy\sql\coercions.py", line 621, in _literal_coercion
+    return self._text_coercion(element, argname, **kw)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\site-packages\sqlalchemy\sql\coercions.py", line 614, in _text_coercion
+    return _no_text_coercion(element, argname)
+  File "C:\Python313\Lib\site-packages\sqlalchemy\sql\coercions.py", line 584, in _no_text_coercion
+    raise exc_cls(
+    ...<7 lines>...
+    ) from err
+sqlalchemy.exc.ArgumentError: Textual SQL expression 'SELECT 1' should be explicitly declared as text('SELECT 1')
