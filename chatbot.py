@@ -12,7 +12,7 @@ class ChatBot:
     def __init__(self):
         """Initialize the chatbot with database and AI components"""
         self.db = DatabaseService()
-        self.gemini = GeminiAPI()  # Ensure correct instance usage
+        self.gemini = GeminiAPI()
 
     def respond(self, sender, message):
         """Processes user messages, fetches responses, and saves interactions."""
@@ -22,18 +22,24 @@ class ChatBot:
         user_id, user_name = self.db.get_or_create_user(sender)
         logging.info(f"User ID: {user_id}, Name: {user_name}")
 
-        # If user session is active, store their name
+        # Handle user registration session
         user = self.db.get_user(sender)
         if user.session:
             self.db.update_user_name(user.id, message)  # Save name
-            self.db.update_user_session(sender, False)  # Mark session inactive
             return f"Thanks {message}, your details have been saved!"
 
         # Handle escalation requests
         if 'help' in message.lower() or 'support' in message.lower():
-            escalation_id = self.db.create_escalation(user_id, message)
-            logging.info(f"Escalation created. ID: {escalation_id} for user: {user_id}")
-            return f"Your issue has been escalated. Reference ID: {escalation_id}"
+            assistants = self.db.get_support_assistants()
+            
+            # Debug log to check what is being returned
+            logging.info(f"Support assistants found: {assistants}")
+            
+            if assistants:
+                assistant_list = "\n".join([f"{a.name} - {a.phone_number}" for a in assistants])
+                return f"Here are the available support assistants:\n{assistant_list}"
+            else:
+                return "No support assistants are currently available."
 
         # Check FAQ before querying Gemini AI
         faq_entry = self.db.find_faq_match(message)
@@ -45,13 +51,13 @@ class ChatBot:
 
         # Generate AI response
         try:
-            response = self.gemini.fetch_response(message) or random.choice([
-                "I'm not sure, can you rephrase?",
-                "Could you provide more details?"
-            ])
+            response = self.gemini.fetch_response(message)
+            if not response:
+                raise ValueError("GeminiAPI returned an empty response.")
         except Exception as e:
             logging.error(f"Error fetching AI response: {e}")
-            response = "Sorry, something went wrong."
+            response = "I'm having trouble understanding. Let me escalate this for you."
+            self.db.create_escalation(user_id, message)
 
         # Save messages to database
         self.db.save_chat_message(user_id, message, is_response=False)
@@ -64,11 +70,12 @@ class ChatBotService:
     def __init__(self):
         """Initialize the chatbot service to process WhatsApp messages"""
         self.chatbot = ChatBot()
+        self.whatsapp_api = WhatsAppAPI()  # Ensure WhatsAppAPI instance is used
 
     def process_messages(self):
         """Checks unread messages and sends responses."""
         while True:
-            unread_messages = WhatsAppAPI.get_unread_messages()
+            unread_messages = self.whatsapp_api.get_unread_messages()
             logging.info("Checking for unread messages...")
 
             if isinstance(unread_messages, dict) and unread_messages.get("status") == "success":
@@ -86,8 +93,8 @@ class ChatBotService:
                             response = self.chatbot.respond(sender_id, message_content)
                             logging.info(f"Replying to {sender_id}: {response}")
 
-                            # Send response
-                            WhatsAppAPI.send_message(sender_id, is_group=False, message=response, message_id=message_id)
+                            # Send response using WhatsAppAPI instance
+                            self.whatsapp_api.send_message(sender_id, is_group=False, message=response, message_id=message_id)
                             logging.info(f"Message sent to {sender_id}")
                         except Exception as e:
                             logging.error(f"Error processing message from {sender_id}: {e}")

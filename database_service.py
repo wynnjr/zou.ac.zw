@@ -1,3 +1,4 @@
+import logging
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from models import User, ChatMessage, Escalation, FAQ
@@ -54,12 +55,14 @@ class DatabaseService:
             session.close()
     
     def save_chat_message(self, user_id, message, is_response=False):
-        """Save chat messages to the database."""
+        """Save chat messages to the database and return the message ID."""
         session = SessionLocal()
         try:
             new_message = ChatMessage(user_id=user_id, message=message, is_response=is_response)
             session.add(new_message)
             session.commit()
+            session.refresh(new_message)
+            return new_message.id
         finally:
             session.close()
     
@@ -84,26 +87,38 @@ class DatabaseService:
         finally:
             session.close()
     
-    def create_escalation(self, user_text, message_text):
-        """Create an escalation using the actual message ID instead of message text."""
+    def create_escalation(self, user_id, message):
+        """Create a new escalation record with the message content.
+        
+        First saves the message to the database and then creates an escalation
+        record using the message ID.
+        """
         session = SessionLocal()
         try:
-            # Fetch the latest message ID for this user
-            last_message = (session.query(ChatMessage)
-                            .filter_by(user_text=user_text)
-                            .order_by(ChatMessage.timestamp.desc())
-                            .first())
-
-            if not last_message:
-                raise ValueError("No previous messages found for user.")
-
-            escalation = Escalation(user_text=user_text, message_text=last_message.text, status="pending")
+            # First save the message and get its ID
+            message_id = self.save_chat_message(user_id, message)
+            
+            # Create the escalation with the integer message_id
+            escalation = Escalation(user_id=user_id, message_id=message_id)
             session.add(escalation)
             session.commit()
+            session.refresh(escalation)
             return escalation.id
         finally:
             session.close()
-
+    
+    # Alternative implementation that expects an existing message_id
+    def create_escalation_with_id(self, user_id, message_id):
+        """Create a new escalation record using an existing message ID."""
+        session = SessionLocal()
+        try:
+            escalation = Escalation(user_id=user_id, message_id=message_id)
+            session.add(escalation)
+            session.commit()
+            session.refresh(escalation)
+            return escalation.id
+        finally:
+            session.close()
     
     def get_pending_escalations(self):
         """Get all pending escalations."""
@@ -125,3 +140,16 @@ class DatabaseService:
             return False
         finally:
             session.close()
+            
+    def get_support_assistants(self):
+        """Fetch all support assistants from the users table."""
+        try:
+            self.cursor.execute("SELECT name, phone_number FROM users WHERE is_assistant = TRUE;")
+            results = self.cursor.fetchall()
+            logging.info(f"Raw assistant query results: {results}")  # Debug log
+            return [{"name": row[0], "phone_number": row[1]} for row in results] if results else []
+        except Exception as e:
+            logging.error(f"Database error: {e}")
+            return []
+
+
