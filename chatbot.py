@@ -32,14 +32,14 @@ class ChatBot:
         if 'help' in message.lower() or 'support' in message.lower():
             assistants = self.db.get_support_assistants()
             
-            # Debug log to check what is being returned
+            # Debug log to check what is being returned....
             logging.info(f"Support assistants found: {assistants}")
             
             if assistants:
                 assistant_list = "\n".join([f"{a.name} - {a.phone_number}" for a in assistants])
                 return f"Here are the available support assistants:\n{assistant_list}"
             else:
-                return "No support assistants are currently available."
+                return "No support assistants are currently available now."
 
         # Check FAQ before querying Gemini AI
         faq_entry = self.db.find_faq_match(message)
