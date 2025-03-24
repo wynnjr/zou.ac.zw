@@ -30,7 +30,7 @@ class ChatBot:
 
             # Handle escalation requests
             if 'help' in message.lower() or 'support' in message.lower():
-                assistants = self.db.get_users_with_phone_numbers()
+                assistants = self.db.get_support_assistants()
                 
                 # Log the assistants data for debugging
                 logging.info(f"Support assistants data: {assistants}")
