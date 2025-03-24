@@ -2,6 +2,11 @@ import logging
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from models import User, ChatMessage, Escalation, FAQ
+from sqlalchemy.sql import text
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Database connection
 DATABASE_URL = "postgresql://postgres:wynn@localhost/chatbot"
@@ -142,14 +147,65 @@ class DatabaseService:
             session.close()
             
     def get_support_assistants(self):
-        """Fetch all support assistants from the users table."""
+        """Fetch all support assistants from the database."""
+        session = SessionLocal()
         try:
-            self.cursor.execute("SELECT name, phone_number FROM users WHERE is_assistant = TRUE;")
-            results = self.cursor.fetchall()
-            logging.info(f"Raw assistant query results: {results}")  # Debug log
-            return [{"name": row[0], "phone_number": row[1]} for row in results] if results else []
+            # Log the query being executed
+            query = text("SELECT id, phone_number, name FROM users WHERE is_assistant = TRUE;")
+            logger.info(f"Executing query: {query}")
+
+            # Execute the query
+            assistants = session.execute(query).fetchall()
+            logger.info(f"Raw Assistants Data: {assistants}")  # Debugging output
+
+            if not assistants:
+                logger.warning("No assistants found in the database.")
+            else:
+                for assistant in assistants:
+                    logger.info(f"Assistant: ID={assistant[0]}, Name={assistant[2]}, Phone={assistant[1]}")
+
+            return [{"id": a[0], "name": a[2], "phone_number": a[1]} for a in assistants]
         except Exception as e:
-            logging.error(f"Database error: {e}")
+            logger.error(f"Database error: {e}")
             return []
+        finally:
+            session.close()
 
+    def display_support_assistants(self):
+        """Fetch and display support assistants."""
+        assistants = self.get_support_assistants()
+        if assistants:
+            print("Here are the available support assistants:")
+            for assistant in assistants:
+                print(f"ID: {assistant['id']}, Name: {assistant['name']}, Phone: {assistant['phone_number']}")
+        else:
+            print("No support assistants are currently available.")
 
+    def get_users_with_phone_numbers(self):
+        """Fetch all users and their phone numbers from the database."""
+        session = SessionLocal()
+        try:
+            # Query to get all users and their phone numbers
+            users = session.query(User).all()
+            return [{"id": user.id, "name": user.name, "phone_number": user.phone_number} for user in users]
+        except Exception as e:
+            logger.error(f"Database error: {e}")
+            return []
+        finally:
+            session.close()
+
+    def display_users_with_phone_numbers(self):
+        """Fetch and display users and their phone numbers."""
+        users = self.get_users_with_phone_numbers()
+        if users:
+            print("Here are the users and their phone numbers:")
+            for user in users:
+                print(f"ID: {user['id']}, Name: {user['name']}, Phone: {user['phone_number']}")
+        else:
+            print("No users found in the database.")
+
+# Test the code
+if __name__ == "__main__":
+    db_service = DatabaseService()
+    db_service.display_support_assistants()
+    db_service.display_users_with_phone_numbers()

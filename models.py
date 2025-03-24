@@ -2,6 +2,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, B
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime, UTC
 import logging
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -12,14 +13,14 @@ Base = declarative_base()
 
 # Models
 class User(Base):
-    """Stores user details"""
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    __tablename__ = 'users'
+    
+    id = Column(Integer, primary_key=True)
     phone_number = Column(String, unique=True, nullable=False)
-    name = Column(String, nullable=True)  # Stores user's name
-    session = Column(Boolean, nullable=False, server_default="true")  # Ensuring default at DB level
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))  # FIXED: Use timezone-aware datetime
+    name = Column(String)
+    session = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_assistant = Column(Boolean, default=False)
 
 class ChatMessage(Base):
     """Stores WhatsApp messages and AI responses"""
@@ -30,7 +31,6 @@ class ChatMessage(Base):
     message = Column(Text, nullable=False)
     timestamp = Column(DateTime, default=lambda: datetime.now(UTC))  # FIXED
     is_response = Column(Boolean, default=False)
-    
     user = relationship("User", backref="messages", cascade="all, delete")
 
 class FAQ(Base):
@@ -118,5 +118,5 @@ def update_user_session(phone_number, session_status):
 
 # Testing (Optional)
 if __name__ == "__main__":
-    create_user("1234567890", "John Doe")
+    create_user("1234567890", "wynn")
     update_user_session("1234567890", False)  # Set session to False

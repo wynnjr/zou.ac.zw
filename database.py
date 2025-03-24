@@ -1,4 +1,6 @@
+from sqlalchemy import text
 from models import SessionLocal, ChatMessage, ChatbotLog, User
+import logging
 
 class DatabaseHandler:
     """Handles all database interactions"""
@@ -51,3 +53,20 @@ class DatabaseHandler:
         messages = session.query(ChatMessage).order_by(ChatMessage.timestamp.desc()).limit(limit).all()
         session.close()
         return messages
+
+    @staticmethod
+    def get_support_assistants():
+        """Fetch all users who are support assistants."""
+        session = SessionLocal()
+        try:
+            query = text("SELECT id, phone_number, name FROM users WHERE is_assistant = TRUE;")
+            assistants = session.execute(query).fetchall()  # Execute query
+
+            logging.info(f"Raw Assistants Data: {assistants}")  # Debugging output
+
+            return [{"id": a[0], "name": a[2], "phone_number": a[1]} for a in assistants]  # Correct indexing
+        except Exception as e:
+            logging.error(f"Database error: {e}")
+            return []
+        finally:
+            session.close()
