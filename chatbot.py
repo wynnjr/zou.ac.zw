@@ -18,15 +18,23 @@ class ChatBot:
         logging.info(f"Received message from {sender}: {message}")
 
         try:
-            # Fetch or create user
-            user_id, user_name = self.db.get_or_create_user(sender)
-            logging.info(f"User ID: {user_id}, Name: {user_name}")
-
-            # Handle user registration session
+            # Fetch user from database
             user = self.db.get_user(sender)
-            if user.session:
-                self.db.update_user_name(user.id, message)  # Save name
-                return f"Thanks {message}, your details have been saved!"
+            
+            # If user doesn't exist, create new user with session=True
+            if not user:
+                user_id = self.db.create_user(sender)
+                user = self.db.get_user(sender)
+                return "Welcome! Please tell me your name to get started."
+            
+            # If user exists but has no name (session=True), save the name
+            if user.session and not user.name:
+                # Assume the first message from a new user is their name
+                self.db.update_user_name(user.id, message)
+                return f"Thank you, {message}! How can I assist you today?"
+            
+            # If user exists with name, proceed with normal conversation
+            logging.info(f"User ID: {user.id}, Name: {user.name}")
 
             # Handle escalation requests
             if 'help' in message.lower() or 'support' in message.lower():
@@ -47,7 +55,7 @@ class ChatBot:
             if faq_entry:
                 faq_answer = faq_entry.answer  # Extract answer
                 logging.info(f"FAQ response found: {faq_answer}")
-                self.db.save_chat_message(user_id, faq_answer, is_response=True)
+                self.db.save_chat_message(user.id, faq_answer, is_response=True)
                 return faq_answer
 
             # Generate AI response
@@ -58,11 +66,15 @@ class ChatBot:
             except Exception as e:
                 logging.error(f"Error fetching AI response: {e}")
                 response = "I'm having trouble understanding. Let me escalate this for you."
-                self.db.create_escalation(user_id, message)
+                self.db.create_escalation(user.id, message)
 
             # Save messages to database
-            self.db.save_chat_message(user_id, message, is_response=False)
-            self.db.save_chat_message(user_id, response, is_response=True)
+            self.db.save_chat_message(user.id, message, is_response=False)
+            self.db.save_chat_message(user.id, response, is_response=True)
+
+            # Personalize response if we have the user's name
+            if user.name:
+                response = f"{user.name}, {response}"
 
             return response
 

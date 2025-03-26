@@ -116,7 +116,4 @@ def update_user_session(phone_number, session_status):
     finally:
         db.close()
 
-# Testing (Optional)
-if __name__ == "__main__":
-    create_user("1234567890", "wynn")
-    update_user_session("1234567890", False)  # Set session to False
+

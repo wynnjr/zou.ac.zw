@@ -1,5 +1,6 @@
+import datetime
 import logging
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, joinedload
 from sqlalchemy import create_engine
 from models import User, ChatMessage, Escalation, FAQ
 from sqlalchemy.sql import text
@@ -40,10 +41,19 @@ class DatabaseService:
         """Create a new user with session=True (awaiting name input)."""
         session = SessionLocal()
         try:
+            # Check if user exists first
+            if session.query(User).filter_by(phone_number=phone_number).first():
+                raise ValueError(f"User {phone_number} already exists")
+                
             new_user = User(phone_number=phone_number, session=True)
             session.add(new_user)
             session.commit()
+            logger.info(f"Created user: {new_user.id} {phone_number}")
             return new_user.id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error creating user: {e}")
+            raise
         finally:
             session.close()
     
@@ -52,10 +62,18 @@ class DatabaseService:
         session = SessionLocal()
         try:
             user = session.query(User).filter_by(id=user_id).first()
-            if user:
-                user.name = name
-                user.session = False
-                session.commit()
+            if not user:
+                logger.error(f"User {user_id} not found")
+                return False
+            user.name = name
+            user.session = False
+            session.commit()
+            logger.info(f"Updated user {user_id}: name='{name}'")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating user name: {e}")
+            return False
         finally:
             session.close()
     
@@ -93,11 +111,7 @@ class DatabaseService:
             session.close()
     
     def create_escalation(self, user_id, message):
-        """Create a new escalation record with the message content.
-        
-        First saves the message to the database and then creates an escalation
-        record using the message ID.
-        """
+        """Create a new escalation record with the message content."""
         session = SessionLocal()
         try:
             # First save the message and get its ID
@@ -112,7 +126,6 @@ class DatabaseService:
         finally:
             session.close()
     
-    # Alternative implementation that expects an existing message_id
     def create_escalation_with_id(self, user_id, message_id):
         """Create a new escalation record using an existing message ID."""
         session = SessionLocal()
@@ -146,66 +159,180 @@ class DatabaseService:
         finally:
             session.close()
             
-    def get_support_assistants(self):
-        """Fetch all support assistants from the database."""
+    @staticmethod
+    def clean_phone_number(phone_number):
+        """Remove @c.us suffix from WhatsApp numbers"""
+        if phone_number and '@c.us' in phone_number:
+            return phone_number.split('@c.us')[0]
+        return phone_number
+        
+    def mark_as_assistant(self, user_id, is_assistant=True):
+        """Mark/unmark a user as support assistant"""
         session = SessionLocal()
         try:
-            # Log the query being executed
-            query = text("SELECT id, phone_number, name FROM users WHERE is_assistant = TRUE;")
-            logger.info(f"Executing query: {query}")
+            user = session.query(User).filter_by(id=user_id).first()
+            if user:
+                user.is_assistant = is_assistant
+                session.commit()
+                logger.info(f"User {user_id} assistant status set to {is_assistant}")
+                return True
+            logger.warning(f"User {user_id} not found")
+            return False
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating assistant status: {e}")
+            return False
+        finally:
+            session.close()
+            
+    def get_support_assistants(self):
+        """Fetch support assistants directly from escalations table with all available data"""
+        session = SessionLocal()
+        try:
+            # Get all escalations with their associated message and user data
+            escalations = session.query(Escalation).options(
+                joinedload(Escalation.user),
+                joinedload(Escalation.message)
+            ).all()
+            
+            assistants = []
+            
+            for esc in escalations:
+                if esc.user:
+                    # Get name from escalation (user_text) or user table
+                    name = getattr(esc, 'user_text', None) or esc.user.name or "Unnamed Assistant"
+                    
+                    # Get phone number from user table
+                    phone = self.clean_phone_number(esc.user.phone_number)
+                    
+                    # Get message text if available
+                    message_text = esc.message.message if esc.message else "No message content"
+                    
+                    assistants.append({
+                        "user_id": esc.user.id,
+                        "name": name,
+                        "phone_number": phone,
+                        "escalation_id": esc.id,
+                        "status": esc.status,
+                        "created_at": esc.created_at,
+                        "message_text": message_text
+                    })
+            
+            return assistants
+        except Exception as e:
+            logger.error(f"Error fetching assistants from escalations: {e}")
+            return []
+        finally:
+            session.close()
 
-            # Execute the query
-            assistants = session.execute(query).fetchall()
-            logger.info(f"Raw Assistants Data: {assistants}")  # Debugging output
-
-            if not assistants:
-                logger.warning("No assistants found in the database.")
-            else:
-                for assistant in assistants:
-                    logger.info(f"Assistant: ID={assistant[0]}, Name={assistant[2]}, Phone={assistant[1]}")
-
-            return [{"id": a[0], "name": a[2], "phone_number": a[1]} for a in assistants]
+    def get_users_with_phone_numbers(self):
+        """Fetch all users with their phone numbers."""
+        session = SessionLocal()
+        try:
+            users = session.query(User).all()
+            return [
+                {
+                    "id": u.id,
+                    "name": u.name or "Unnamed User",
+                    "phone_number": self.clean_phone_number(u.phone_number)
+                }
+                for u in users
+            ]
         except Exception as e:
             logger.error(f"Database error: {e}")
+            return []
+        finally:
+            session.close()
+            
+    def get_all_users(self):
+        """Get all users from the database"""
+        session = SessionLocal()
+        try:
+            return session.query(User).all()
+        except Exception as e:
+            logger.error(f"Error fetching all users: {e}")
             return []
         finally:
             session.close()
 
     def display_support_assistants(self):
-        """Fetch and display support assistants."""
+        """Display all support assistants found in escalations with detailed info"""
         assistants = self.get_support_assistants()
         if assistants:
-            print("Here are the available support assistants:")
-            for assistant in assistants:
-                print(f"ID: {assistant['id']}, Name: {assistant['name']}, Phone: {assistant['phone_number']}")
+            print("\n=== Support Assistants from Escalations ===")
+            print(f"Found {len(assistants)} assistants in escalations:")
+            print("-" * 80)
+            for idx, assistant in enumerate(assistants, 1):
+                print(f"{idx}. User ID: {assistant['user_id']}")
+                print(f"   Name: {assistant['name']}")
+                print(f"   Phone: {assistant['phone_number']}")
+                print(f"   Escalation ID: {assistant['escalation_id']}")
+                print(f"   Status: {assistant['status']}")
+                print(f"   Created: {assistant['created_at']}")
+                print(f"   Last Message: {assistant['message_text'][:50]}...")
+                print("-" * 80)
         else:
-            print("No support assistants are currently available.")
+            print("\nNo support assistants found in escalations table.")
+            
+            # Debugging output to help diagnose why no assistants are found
+            session = SessionLocal()
+            try:
+                escalation_count = session.query(Escalation).count()
+                user_count = session.query(User).count()
+                print(f"\nDebug Info:")
+                print(f"Total escalations in database: {escalation_count}")
+                print(f"Total users in database: {user_count}")
+                
+                if escalation_count > 0:
+                    print("\nSample escalation data:")
+                    sample = session.query(Escalation).first()
+                    print(f"Escalation ID: {sample.id}")
+                    print(f"User ID: {sample.user_id}")
+                    print(f"Status: {sample.status}")
+            finally:
+                session.close()
 
-    def get_users_with_phone_numbers(self):
-        """Fetch all users and their phone numbers from the database."""
-        session = SessionLocal()
-        try:
-            # Query to get all users and their phone numbers
-            users = session.query(User).all()
-            return [{"id": user.id, "name": user.name, "phone_number": user.phone_number} for user in users]
-        except Exception as e:
-            logger.error(f"Database error: {e}")
-            return []
-        finally:
-            session.close()
 
     def display_users_with_phone_numbers(self):
-        """Fetch and display users and their phone numbers."""
+        """Fetch and display all users with phone numbers."""
         users = self.get_users_with_phone_numbers()
         if users:
-            print("Here are the users and their phone numbers:")
+            print("Here are all users:")
             for user in users:
                 print(f"ID: {user['id']}, Name: {user['name']}, Phone: {user['phone_number']}")
         else:
-            print("No users found in the database.")
+            print("No users found in database.")
+
+    def delete_all_users(self):
+        """Delete ALL users and their related data (cascading delete)"""
+        session = SessionLocal()
+        try:
+            user_count = session.query(User).count()
+            session.query(User).delete()
+            session.commit()
+            logger.info(f"Deleted {user_count} users and their related data")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error deleting users: {e}")
+            return False
+        finally:
+            session.close()
 
 # Test the code
 if __name__ == "__main__":
     db_service = DatabaseService()
     db_service.display_support_assistants()
+    
+    # Display assistants from escalations
+    print("=== Support Assistants from Escalations ===")
+    db_service.display_support_assistants()
+    
+    # Display all users
+    print("\n=== All Users ===")
     db_service.display_users_with_phone_numbers()
+    
+    # Example: Delete all users (uncomment to use)
+    # print("\nWARNING: This will delete ALL users!")
+    # if input("Are you sure? (yes/no): ").lower() == 'yes':
+    #     db_service.delete_all_users()
