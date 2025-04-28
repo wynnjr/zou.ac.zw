@@ -56,17 +56,28 @@ class DatabaseHandler:
 
     @staticmethod
     def get_support_assistants():
-        """Fetch all users who are support assistants."""
+        """Fetch escalation records with user_id and message_id from escalations table."""
         session = SessionLocal()
         try:
-            query = text("SELECT id, phone_number, name FROM users WHERE is_assistant = TRUE;")
-            assistants = session.execute(query).fetchall()  # Execute query
+            # Query the escalations table for user_id and message_id
+            query = text("""
+                SELECT id, user_id, message_id, status, created_at
+                FROM escalations
+                ORDER BY created_at DESC;
+            """)
+            escalations = session.execute(query).fetchall()
 
-            logging.info(f"Raw Assistants Data: {assistants}")  # Debugging output
+            logging.info(f"Escalations Data: {escalations}")  # Debugging output
 
-            return [{"id": a[0], "name": a[2], "phone_number": a[1]} for a in assistants]  # Correct indexing
+            return [{
+                "id": e[0],
+                "user_id": e[1],
+                "message_id": e[2],
+                "status": e[3],
+                "created_at": e[4]
+            } for e in escalations]
         except Exception as e:
-            logging.error(f"Database error: {e}")
+            logging.error(f"Database error in get_support_assistants: {e}")
             return []
         finally:
             session.close()

@@ -30,4 +30,3 @@ class WhatsAppAPI:
             logging.info(f"Message sent to {phone} (Group: {is_group}): {message}")
         except requests.RequestException as e:
             logging.error(f"Error sending message: {e}")
-
