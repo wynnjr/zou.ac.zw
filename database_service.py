@@ -19,9 +19,11 @@ class DatabaseService:
         """Fetch user by phone number or create a new user if not found."""
         session = SessionLocal()
         try:
-            user = session.query(User).filter_by(phone_number=phone_number).first()
+            # Clean the phone number before using it
+            clean_phone = self.clean_phone_number(phone_number)
+            user = session.query(User).filter_by(phone_number=clean_phone).first()
             if not user:
-                user = User(phone_number=phone_number, session=True)
+                user = User(phone_number=clean_phone, session=True)
                 session.add(user)
                 session.commit()
                 session.refresh(user)
@@ -33,7 +35,9 @@ class DatabaseService:
         """Fetch user by phone number."""
         session = SessionLocal()
         try:
-            return session.query(User).filter_by(phone_number=phone_number).first()
+            # Clean the phone number before using it
+            clean_phone = self.clean_phone_number(phone_number)
+            return session.query(User).filter_by(phone_number=clean_phone).first()
         finally:
             session.close()
     
@@ -41,14 +45,17 @@ class DatabaseService:
         """Create a new user with session=True (awaiting name input)."""
         session = SessionLocal()
         try:
+            # Clean the phone number before using it
+            clean_phone = self.clean_phone_number(phone_number)
+            
             # Check if user exists first
-            if session.query(User).filter_by(phone_number=phone_number).first():
-                raise ValueError(f"User {phone_number} already exists")
+            if session.query(User).filter_by(phone_number=clean_phone).first():
+                raise ValueError(f"User {clean_phone} already exists")
                 
-            new_user = User(phone_number=phone_number, session=True)
+            new_user = User(phone_number=clean_phone, session=True)
             session.add(new_user)
             session.commit()
-            logger.info(f"Created user: {new_user.id} {phone_number}")
+            logger.info(f"Created user: {new_user.id} {clean_phone}")
             return new_user.id
         except Exception as e:
             session.rollback()
@@ -253,6 +260,17 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error fetching all users: {e}")
             return []
+        finally:
+            session.close()
+
+    def get_user_by_name(self, name):
+        """Get a user by their name (case insensitive)"""
+        session = SessionLocal()
+        try:
+            return session.query(User).filter(User.name.ilike(f"%{name}%")).first()
+        except Exception as e:
+            logger.error(f"Error fetching user by name: {e}")
+            return None
         finally:
             session.close()
 

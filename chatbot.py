@@ -1,4 +1,3 @@
-# main.py
 import logging
 import time
 import threading
@@ -41,7 +40,7 @@ class ChatBot:
             if message.lower() in self.conversation_end_phrases:
                 # Clean up the user's conversation data
                 self.db.cleanup_completed_conversation(user.id)
-                return f"Thank you for chatting with us, Your conversation has been completed and data cleared for privacy. Have a great day!"
+                return f"Thank you for chatting with us, {user.name}. Your conversation has been completed and data cleared for privacy. Have a great day!"
             
             # If user exists with name, proceed with normal conversation
             logging.info(f"User ID: {user.id}, Name: {user.name}")
@@ -85,8 +84,23 @@ class ChatBot:
 
             # Generate AI response with conversation context
             try:
-                # Combine conversation history with current message for context
-                context_prompt = f"{conversation_history}\nUser's current message: {message}\nPlease respond to the user's current message:"
+                # Combine user info with conversation history for context
+                context_prompt = f"""
+USER INFORMATION:
+User ID: {user.id}
+User Name: {user.name}
+Phone Number: {sender}
+
+{conversation_history}
+
+User's current message: {message}
+
+IMPORTANT INSTRUCTIONS:
+1. Remember that you are talking to {user.name}
+2. You should address the user by name when appropriate
+3. If the user asks about their name, you know that their name is {user.name}
+4. Respond to the user's current message in a personalized way
+"""
                 response = self.gemini.fetch_response(context_prompt)
                 if not response:
                     raise ValueError("GeminiAPI returned an empty response.")
@@ -103,10 +117,6 @@ class ChatBot:
             # Save messages to database
             self.db.save_chat_message(user.id, message, is_response=False)
             self.db.save_chat_message(user.id, response, is_response=True)
-
-            # Personalize response if we have the user's name
-            if user.name:
-                response = f"{response}"
 
             return response
 
@@ -151,7 +161,7 @@ class ChatBotService:
                 else:
                     logging.warning("No new messages or API error")
 
-                time.sleep(2)  # Wait before checking again
+                time.sleep(1)  # Wait before checking again
 
         except KeyboardInterrupt:
             logging.info("ChatBot service stopped gracefully.")
@@ -179,8 +189,6 @@ def scheduled_cleanup(database_service, interval_hours=CLEANUP_INTERVAL_HOURS, d
         except Exception as e:
             logging.error(f"Error in scheduled cleanup: {e}")
 
-# Main entry point
-# main.py (continued)
 # Main entry point
 if __name__ == "__main__":
     try:
