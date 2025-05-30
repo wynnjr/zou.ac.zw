@@ -1,6 +1,6 @@
 import requests
 import logging
-from config import UNREAD_MESSAGES_ENDPOINT, SEND_MESSAGE_ENDPOINT, HEADERS
+from config import UNREAD_MESSAGES_ENDPOINT, SEND_MESSAGE_ENDPOINT, HEADERS, MAX_MESSAGE_LENGTH
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 

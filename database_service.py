@@ -1,41 +1,55 @@
-# database_service.py
 import logging
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine, and_
-from models import User, ChatMessage, Escalation, FAQ, Base
+from models import User, ChatMessage, Escalation, FAQ, UserState, ChatbotLog, Base
 from datetime import datetime, timedelta
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Database connection
 DATABASE_URL = "postgresql://postgres:wynn@localhost/chatbot?options=-c search_path=public"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 
+def create_tables():
+    """Create all database tables"""
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error creating tables: {e}")
+        return False
+
 class DatabaseService:
-    def get_or_create_user(self, phone_number):
-        """Fetch user by phone number or create a new user if not found."""
-        session = SessionLocal()
-        try:
-            # Clean the phone number before using it
-            clean_phone = self.clean_phone_number(phone_number)
-            user = session.query(User).filter_by(phone_number=clean_phone).first()
-            if not user:
-                user = User(phone_number=clean_phone, session=True)
-                session.add(user)
-                session.commit()
-                session.refresh(user)
-            return user.id, user.name
-        finally:
-            session.close()
+    def __init__(self):
+        # Ensure tables exist
+        create_tables()
+    
+    def clean_phone_number(self, phone_number):
+        """Convert phone numbers from scientific notation to standard format"""
+        if phone_number is None:
+            return None
+            
+        if isinstance(phone_number, float):
+            phone_number = str(int(phone_number))
+        elif isinstance(phone_number, str):
+            if 'E+' in phone_number:
+                phone_number = str(int(float(phone_number)))
+            if '@c.us' in phone_number:
+                phone_number = phone_number.split('@')[0]
+        
+        phone_number = ''.join(filter(str.isdigit, str(phone_number)))
+        
+        if len(phone_number) == 9 and not phone_number.startswith('263'):
+            phone_number = '263' + phone_number
+            
+        return phone_number
     
     def get_user(self, phone_number):
         """Fetch user by phone number."""
         session = SessionLocal()
         try:
-            # Clean the phone number before using it
             clean_phone = self.clean_phone_number(phone_number)
             return session.query(User).filter_by(phone_number=clean_phone).first()
         finally:
@@ -45,10 +59,8 @@ class DatabaseService:
         """Create a new user with session=True (awaiting name input)."""
         session = SessionLocal()
         try:
-            # Clean the phone number before using it
             clean_phone = self.clean_phone_number(phone_number)
             
-            # Check if user exists first
             if session.query(User).filter_by(phone_number=clean_phone).first():
                 raise ValueError(f"User {clean_phone} already exists")
                 
@@ -84,6 +96,67 @@ class DatabaseService:
         finally:
             session.close()
     
+    def update_user_email(self, user_id, email):
+        """Update user email address."""
+        session = SessionLocal()
+        try:
+            user = session.query(User).filter_by(id=user_id).first()
+            if not user:
+                logger.error(f"User {user_id} not found")
+                return False
+            user.email = email
+            session.commit()
+            logger.info(f"Updated user {user_id}: email='{email}'")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating user email: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def get_user_state(self, user_id):
+        """Get the current state of a user."""
+        session = SessionLocal()
+        try:
+            return session.query(UserState).filter_by(user_id=user_id).first()
+        except Exception as e:
+            logger.error(f"Error getting user state: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def update_user_state(self, user_id, state, data=None):
+        """Update or create a user state."""
+        session = SessionLocal()
+        try:
+            user_state = session.query(UserState).filter_by(user_id=user_id).first()
+            
+            if state is None:
+                if user_state:
+                    session.delete(user_state)
+                    session.commit()
+                    logger.info(f"Deleted state for user {user_id}")
+                return True
+            
+            if user_state:
+                user_state.state = state
+                user_state.data = data
+                user_state.updated_at = datetime.utcnow()
+            else:
+                user_state = UserState(user_id=user_id, state=state, data=data)
+                session.add(user_state)
+                
+            session.commit()
+            logger.info(f"Updated state for user {user_id}: {state}")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating user state: {e}")
+            return False
+        finally:
+            session.close()
+    
     def save_chat_message(self, user_id, message, is_response=False):
         """Save chat messages to the database and return the message ID."""
         session = SessionLocal()
@@ -105,15 +178,7 @@ class DatabaseService:
                         .order_by(ChatMessage.timestamp.desc())
                         .limit(limit)
                         .all())
-            return list(reversed(messages))  # Return in chronological order
-        finally:
-            session.close()
-    
-    def find_faq_match(self, query):
-        """Find a matching FAQ for the given query."""
-        session = SessionLocal()
-        try:
-            return session.query(FAQ).filter(FAQ.question.ilike(f"%{query}%")).first()
+            return list(reversed(messages))
         finally:
             session.close()
     
@@ -121,10 +186,7 @@ class DatabaseService:
         """Create a new escalation record with the message content."""
         session = SessionLocal()
         try:
-            # First save the message and get its ID
             message_id = self.save_chat_message(user_id, message)
-            
-            # Create the escalation with the integer message_id
             escalation = Escalation(user_id=user_id, message_id=message_id)
             session.add(escalation)
             session.commit()
@@ -133,23 +195,22 @@ class DatabaseService:
         finally:
             session.close()
     
-    def create_escalation_with_id(self, user_id, message_id):
-        """Create a new escalation record using an existing message ID."""
+    def get_escalation_message(self, escalation_id):
+        """Get the original message content for an escalation."""
         session = SessionLocal()
         try:
-            escalation = Escalation(user_id=user_id, message_id=message_id)
-            session.add(escalation)
-            session.commit()
-            session.refresh(escalation)
-            return escalation.id
-        finally:
-            session.close()
-    
-    def get_pending_escalations(self):
-        """Get all pending escalations."""
-        session = SessionLocal()
-        try:
-            return session.query(Escalation).filter_by(status="pending").all()
+            escalation = session.query(Escalation).filter_by(id=escalation_id).first()
+            if not escalation:
+                return "No message available for this escalation."
+                
+            message = session.query(ChatMessage).filter_by(id=escalation.message_id).first()
+            if not message:
+                return "Original message not found."
+                
+            return message.message
+        except Exception as e:
+            logger.error(f"Error retrieving escalation message: {e}")
+            return "Error retrieving original message."
         finally:
             session.close()
     
@@ -165,62 +226,12 @@ class DatabaseService:
             return False
         finally:
             session.close()
-            
-    def clean_phone_number(self, phone_number):
-        """Convert phone numbers from scientific notation (2.63E+11) to standard format"""
-        if phone_number is None:
-            return None
-            
-        # Convert scientific notation (2.63E+11) to standard format
-        if isinstance(phone_number, float):
-            phone_number = str(int(phone_number))
-        elif isinstance(phone_number, str):
-            if 'E+' in phone_number:  # Scientific notation
-                phone_number = str(int(float(phone_number)))
-            # Remove @c.us suffix if present
-            if '@c.us' in phone_number:
-                phone_number = phone_number.split('@')[0]
-        
-        # Ensure string type and remove non-digits
-        phone_number = ''.join(filter(str.isdigit, str(phone_number)))
-        
-        # Add country code if missing (assuming Zimbabwe +263)
-        if len(phone_number) == 9 and not phone_number.startswith('263'):
-            phone_number = '263' + phone_number
-            
-        return phone_number
-        
-    def mark_as_assistant(self, user_id, is_assistant=True):
-        """Mark/unmark a user as support assistant"""
-        session = SessionLocal()
-        try:
-            user = session.query(User).filter_by(id=user_id).first()
-            if user:
-                user.is_assistant = is_assistant
-                session.commit()
-                logger.info(f"User {user_id} assistant status set to {is_assistant}")
-                return True
-            logger.warning(f"User {user_id} not found")
-            return False
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error updating assistant status: {e}")
-            return False
-        finally:
-            session.close()
-            
+    
     def get_support_assistants(self):
-        """Fetch ALL assistants with proper data alignment"""
+        """Fetch all support assistants."""
         session = SessionLocal()
         try:
-            # Explicitly select only existing columns
-            assistants = session.query(
-                User.id,
-                User.phone_number,
-                User.name,
-                User.is_assistant
-            ).filter_by(is_assistant=True).all()
-
+            assistants = session.query(User).filter_by(is_assistant=True).all()
             return [
                 {
                     "id": a.id,
@@ -232,203 +243,149 @@ class DatabaseService:
             ]
         finally:
             session.close()
-
-    def get_users_with_phone_numbers(self):
-        """Fetch all users with their phone numbers."""
-        session = SessionLocal()
-        try:
-            users = session.query(User).all()
-            return [
-                {
-                    "id": u.id,
-                    "name": u.name or "Unnamed User",
-                    "phone_number": self.clean_phone_number(u.phone_number)
-                }
-                for u in users
-            ]
-        except Exception as e:
-            logger.error(f"Database error: {e}")
-            return []
-        finally:
-            session.close()
-            
-    def get_all_users(self):
-        """Get all users from the database"""
-        session = SessionLocal()
-        try:
-            return session.query(User).all()
-        except Exception as e:
-            logger.error(f"Error fetching all users: {e}")
-            return []
-        finally:
-            session.close()
-
-    def get_user_by_name(self, name):
-        """Get a user by their name (case insensitive)"""
-        session = SessionLocal()
-        try:
-            return session.query(User).filter(User.name.ilike(f"%{name}%")).first()
-        except Exception as e:
-            logger.error(f"Error fetching user by name: {e}")
-            return None
-        finally:
-            session.close()
-
-    def display_support_assistants(self):
-        """Display that matches your SQL query exactly"""
-        assistants = self.get_support_assistants()
-        if not assistants:
-            print("No assistants found!")
-            return
-
-        print("\n=== DATABASE VERIFIED ASSISTANTS ===")
-        print(f"Found {len(assistants)} assistants:")
-        print("-" * 60)
-        for idx, a in enumerate(assistants, 1):
-            print(f"{idx}. ID: {a['id']}")
-            print(f"   Name: {a['name']}")
-            print(f"   Phone: {a['phone_number']}")
-            print(f"   Is Assistant: {'Yes' if a['is_assistant'] else 'No'}")
-            print("-" * 60)
-            
-    def _clear_session_cache(self):
-        engine.dispose()  # Reset connection pool
-
-    def delete_all_users(self):
-        """Delete ALL users and their related data (cascading delete)"""
-        session = SessionLocal()
-        try:
-            user_count = session.query(User).count()
-            session.query(User).delete()
-            session.commit()
-            logger.info(f"Deleted {user_count} users and their related data")
-            return True
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error deleting users: {e}")
-            return False
-        finally:
-            session.close()
-            
-    # ===== NEW CLEANUP METHODS =====
     
-    def clear_user_chat_history(self, user_id):
-        """Delete all chat messages for a specific user."""
+    def cleanup_completed_conversation(self, user_id):
+        """Clean up completed conversation data."""
         session = SessionLocal()
         try:
-            deleted_count = session.query(ChatMessage).filter_by(user_id=user_id).delete()
-            session.commit()
-            logger.info(f"Cleared {deleted_count} chat messages for user {user_id}")
-            return deleted_count
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error clearing user chat history: {e}")
-            return 0
-        finally:
-            session.close()
-    
-    def cleanup_user_data(self, user_id, preserve_user=True):
-        """
-        Clean up all user data including chat messages and escalations.
-        If preserve_user is True, keep the user record but reset session state.
-        """
-        session = SessionLocal()
-        try:
-            # Delete all chat messages for this user
             message_count = session.query(ChatMessage).filter_by(user_id=user_id).delete()
-            
-            # Delete all escalations for this user
             escalation_count = session.query(Escalation).filter_by(user_id=user_id).delete()
-            
-            if not preserve_user:
-                # Delete the user completely
-                session.query(User).filter_by(id=user_id).delete()
-            else:
-                # Reset the user session but keep their record
-                user = session.query(User).filter_by(id=user_id).first()
-                if user:
-                    user.session = True  # Reset to session mode
-            
+            session.query(UserState).filter_by(user_id=user_id).delete()
             session.commit()
-            logger.info(f"Cleaned up user {user_id}: {message_count} messages, {escalation_count} escalations removed")
+            logger.info(f"Cleaned up user {user_id}: {message_count} messages, {escalation_count} escalations")
             return True
         except Exception as e:
             session.rollback()
-            logger.error(f"Error cleaning up user data: {e}")
+            logger.error(f"Error cleaning up conversation: {e}")
             return False
         finally:
             session.close()
     
     def cleanup_old_conversations(self, days_old=7):
-        """Delete chat messages and escalations older than the specified number of days."""
+        """Clean up old conversations."""
         session = SessionLocal()
         try:
             cutoff_date = datetime.utcnow() - timedelta(days=days_old)
-            
-            # Delete old messages
-            old_messages = session.query(ChatMessage).filter(ChatMessage.timestamp < cutoff_date).delete()
-            
-            # Delete old escalations
-            old_escalations = session.query(Escalation).filter(Escalation.created_at < cutoff_date).delete()
-            
-            # Get inactive users (no messages for the past days_old days)
-            inactive_users = session.query(User).filter(
-                ~User.id.in_(
-                    session.query(ChatMessage.user_id).filter(
-                        ChatMessage.timestamp >= cutoff_date
-                    ).distinct()
-                )
-            ).all()
-            
-            inactive_user_count = len(inactive_users)
-            logger.info(f"Found {inactive_user_count} inactive users")
-            
+            msg_count = session.query(ChatMessage).filter(ChatMessage.timestamp < cutoff_date).delete()
+            esc_count = session.query(Escalation).filter(Escalation.created_at < cutoff_date).delete()
             session.commit()
-            logger.info(f"Cleaned up {old_messages} old messages and {old_escalations} old escalations")
-            return old_messages, old_escalations
+            return msg_count, esc_count
         except Exception as e:
             session.rollback()
-            logger.error(f"Error cleaning up old conversations: {e}")
+            logger.error(f"Error in cleanup_old_conversations: {e}")
             return 0, 0
         finally:
             session.close()
-            
+    
     def cleanup_resolved_escalations(self):
-        """Delete escalations that have been resolved."""
+        """Clean up resolved escalations."""
         session = SessionLocal()
         try:
-            resolved_count = session.query(Escalation).filter_by(status="resolved").delete()
+            count = session.query(Escalation).filter_by(status='resolved').delete()
             session.commit()
-            logger.info(f"Cleaned up {resolved_count} resolved escalations")
-            return resolved_count
+            return count
         except Exception as e:
             session.rollback()
             logger.error(f"Error cleaning up resolved escalations: {e}")
             return 0
         finally:
             session.close()
-            
-    def cleanup_completed_conversation(self, user_id):
-        """
-        Cleanup after conversation completion - reset user to initial state
-        but preserve the user record with their name and phone number.
-        """
+    
+    def log_event(self, log_type, message):
+        """Log an event to the database."""
         session = SessionLocal()
         try:
-            # Delete chat messages
-            msg_count = session.query(ChatMessage).filter_by(user_id=user_id).delete()
-            
-            # Mark any escalations as resolved
-            esc_count = session.query(Escalation).filter(
-                and_(Escalation.user_id == user_id, Escalation.status == "pending")
-            ).update({"status": "resolved"})
-            
+            new_log = ChatbotLog(
+                log_type=log_type,
+                message=message,
+                timestamp=datetime.utcnow()
+            )
+            session.add(new_log)
             session.commit()
-            logger.info(f"Completed conversation cleanup for user {user_id}: {msg_count} messages cleared, {esc_count} escalations resolved")
-            return True
+            session.refresh(new_log)
+            return new_log.id
         except Exception as e:
             session.rollback()
-            logger.error(f"Error during conversation cleanup: {e}")
-            return False
+            logger.error(f"Failed to log event to database: {e}")
+            return None
         finally:
             session.close()
+    
+    def get_last_user_messages(self, user_id, limit=3):
+        """Get the last N messages from a specific user (not bot responses)."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, user_id, message, is_response, created_at 
+                    FROM chat_messages 
+                    WHERE user_id = %s AND is_response = FALSE
+                    ORDER BY created_at DESC 
+                    LIMIT %s
+                """, (user_id, limit))
+                
+                rows = cursor.fetchall()
+                messages = []
+                for row in rows:
+                    msg = type('Message', (), {
+                        'id': row[0],
+                        'user_id': row[1], 
+                        'message': row[2],
+                        'is_response': row[3],
+                        'created_at': row[4]
+                    })()
+                    messages.append(msg)
+                
+                return messages
+        except Exception as e:
+            logging.error(f"Error getting last user messages: {e}")
+            return []
+
+def get_user_failure_count(self, user_id):
+    """Get the current failure count for a user."""
+    try:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT failure_count FROM user_states 
+                WHERE user_id = %s
+            """, (user_id,))
+            
+            result = cursor.fetchone()
+            return result[0] if result and result[0] is not None else 0
+    except Exception as e:
+        logging.warning(f"Error getting user failure count: {e}")
+        return 0
+
+def set_user_failure_count(self, user_id, count):
+    """Set the failure count for a user."""
+    try:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO user_states (user_id, failure_count, updated_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (user_id) 
+                DO UPDATE SET 
+                    failure_count = EXCLUDED.failure_count,
+                    updated_at = NOW()
+            """, (user_id, count))
+            conn.commit()
+    except Exception as e:
+        logging.warning(f"Error setting user failure count: {e}")
+
+def cleanup_inactive_user_states(self):
+    """Clean up user states for inactive users (older than 7 days)."""
+    try:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM user_states 
+                WHERE updated_at < NOW() - INTERVAL '7 days'
+            """)
+            deleted_count = cursor.rowcount
+            conn.commit()
+            return deleted_count
+    except Exception as e:
+        logging.error(f"Error cleaning up inactive user states: {e}")
+        return 0
