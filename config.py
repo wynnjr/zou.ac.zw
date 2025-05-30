@@ -32,7 +32,7 @@ EMAIL_USER = "wchimpaka@gmail.com"  # Your Gmail account
 EMAIL_PASSWORD = "kmex dccx wlcj crlc"   # Use App Password, not regular password!
 
 # Recipients Configuration
-IT_SUPPORT_EMAIL = "chimpakaw@zou.ac.zw"  # Primary IT support
+IT_SUPPORT_EMAIL = "itsupport@zou.ac.zw"  # Primary IT support
 
 # Email Settings
 EMAIL_FROM_NAME = "ZOU IT Support Chatbot"

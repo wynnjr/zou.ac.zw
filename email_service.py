@@ -2,192 +2,187 @@ import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from config import EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASSWORD, EMAIL_USE_TLS
+from email.utils import formataddr
+from datetime import datetime
+from config import (
+    EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASSWORD, EMAIL_USE_TLS,
+    IT_SUPPORT_EMAIL, EMAIL_FROM_NAME
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-def test_email_connection():
-    """Test email server connection and authentication."""
-    server = None
-    try:
-        logger.info(f"Testing connection to {EMAIL_HOST}:{EMAIL_PORT}")
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.set_debuglevel(1)  # Enable debug output
-        
-        # Send EHLO first
-        logger.info("Sending EHLO...")
-        server.ehlo()
-        
-        if EMAIL_USE_TLS:
-            logger.info("Starting TLS...")
-            server.starttls()
-            # Send EHLO again after TLS
-            logger.info("Sending EHLO after TLS...")
-            server.ehlo()
-        
-        logger.info(f"Attempting login with user: {EMAIL_USER}")
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        
-        logger.info("Email connection test successful!")
-        return True
-        
-    except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"Authentication failed: {e}")
-        logger.error("Check your email credentials and app password")
-        return False
-    except smtplib.SMTPException as e:
-        logger.error(f"SMTP error: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"Connection test failed: {e}")
-        return False
-    finally:
-        if server:
-            try:
-                server.quit()
-            except:
-                pass
+class EmailService:
+    def __init__(self):
+        self.host = EMAIL_HOST
+        self.port = EMAIL_PORT
+        self.use_tls = EMAIL_USE_TLS
+        self.user = EMAIL_USER
+        self.password = EMAIL_PASSWORD
+        self.from_name = EMAIL_FROM_NAME
 
+    def _create_connection(self):
+        """Create and return an authenticated SMTP connection."""
+        try:
+            server = smtplib.SMTP(self.host, self.port, timeout=30)
+            server.ehlo()
+            
+            if self.use_tls:
+                server.starttls()
+                server.ehlo()
+            
+            server.login(self.user, self.password)
+            return server
+        except Exception as e:
+            logger.error(f"Failed to create email connection: {e}")
+            raise
+
+    def send_escalation_email(self, user_name, user_phone, user_email, escalation_id, 
+                            original_message, escalation_reason):
+        """Send escalation email to IT support."""
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = formataddr((self.from_name, self.user))
+            msg['To'] = IT_SUPPORT_EMAIL
+            msg['Subject'] = f"Chatbot Escalation - {user_name} (ID: {escalation_id})"
+            
+            if user_email:
+                msg['Reply-To'] = user_email
+
+            # Create detailed email body
+            body = f"""
+CHATBOT ESCALATION ALERT
+========================
+
+User Details:
+- Name: {user_name}
+- Phone: {user_phone}
+- Email: {user_email or 'Not provided'}
+- Escalation ID: {escalation_id}
+
+Escalation Reason:
+{escalation_reason}
+
+Original User Message:
+{original_message}
+
+Action Required:
+Please review the conversation history and contact the user promptly.
+
+Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+System: ZOU IT Support Chatbot
+"""
+
+            msg.attach(MIMEText(body, 'plain'))
+            
+            with self._create_connection() as server:
+                server.sendmail(self.user, IT_SUPPORT_EMAIL, msg.as_string())
+            
+            logger.info(f"Escalation email sent for user {user_name} (ID: {escalation_id})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to send escalation email: {e}")
+            return False
+
+    def send_confirmation_email(self, to_email, user_name, escalation_id):
+        """Send confirmation email to user."""
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = formataddr((self.from_name, self.user))
+            msg['To'] = to_email
+            msg['Subject'] = "Your Support Request Has Been Received - ZOU IT"
+
+            body = f"""
+Hello {user_name},
+
+Your support request has been successfully submitted to our IT team.
+
+Reference ID: {escalation_id}
+Submitted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+What happens next:
+1. Our IT team has been notified
+2. Someone will review your conversation history
+3. You'll be contacted shortly for assistance
+
+If you need immediate assistance, you can also contact:
+{IT_SUPPORT_EMAIL}
+
+Thank you for your patience.
+
+Best regards,
+ZOU IT Support Team
+"""
+
+            msg.attach(MIMEText(body, 'plain'))
+            
+            with self._create_connection() as server:
+                server.sendmail(self.user, to_email, msg.as_string())
+            
+            logger.info(f"Confirmation email sent to {to_email}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to send confirmation email to {to_email}: {e}")
+            return False
+
+# Legacy functions for backward compatibility
 def send_support_ticket(to_email, from_email, subject, body):
-    """Send a support ticket email to IT support."""
-    server = None
+    """Legacy function - maintained for compatibility."""
+    email_service = EmailService()
     try:
-        logger.info(f"Preparing to send support ticket to {to_email}")
-        
-        # Create message
         msg = MIMEMultipart()
-        msg['From'] = EMAIL_USER
+        msg['From'] = formataddr((email_service.from_name, email_service.user))
         msg['To'] = to_email
         msg['Subject'] = subject
-        msg['Reply-To'] = from_email
+        if from_email:
+            msg['Reply-To'] = from_email
         
-        # Add body
         msg.attach(MIMEText(body, 'plain'))
         
-        # Connect to server
-        logger.info(f"Connecting to {EMAIL_HOST}:{EMAIL_PORT}")
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.set_debuglevel(1)  # Enable debug output
+        with email_service._create_connection() as server:
+            server.sendmail(email_service.user, to_email, msg.as_string())
         
-        # Send EHLO first
-        server.ehlo()
-        
-        if EMAIL_USE_TLS:
-            logger.info("Starting TLS...")
-            server.starttls()
-            # Send EHLO again after TLS
-            server.ehlo()
-        
-        # Login
-        logger.info(f"Logging in as {EMAIL_USER}")
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        
-        # Send message
-        logger.info("Sending message...")
-        text = msg.as_string()
-        server.sendmail(EMAIL_USER, to_email, text)
-        
-        logger.info(f"Support ticket email sent successfully to {to_email}")
         return True
-        
-    except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"Authentication failed: {e}")
-        logger.error("Check your Gmail app password or enable 2FA")
-        return False
-    except smtplib.SMTPRecipientsRefused as e:
-        logger.error(f"Recipient refused: {e}")
-        return False
-    except smtplib.SMTPException as e:
-        logger.error(f"SMTP error: {e}")
-        return False
     except Exception as e:
-        logger.error(f"Failed to send support ticket email: {e}")
+        logger.error(f"Legacy send_support_ticket failed: {e}")
         return False
-    finally:
-        if server:
-            try:
-                server.quit()
-            except:
-                pass
 
 def send_confirmation_email(to_email, subject, body):
-    """Send a confirmation email to the user."""
-    server = None
+    """Legacy function - maintained for compatibility."""
+    email_service = EmailService()
     try:
-        logger.info(f"Preparing to send confirmation email to {to_email}")
-        
-        # Create message
         msg = MIMEMultipart()
-        msg['From'] = EMAIL_USER
+        msg['From'] = formataddr((email_service.from_name, email_service.user))
         msg['To'] = to_email
         msg['Subject'] = subject
         
-        # Add body
         msg.attach(MIMEText(body, 'plain'))
         
-        # Connect to server
-        logger.info(f"Connecting to {EMAIL_HOST}:{EMAIL_PORT}")
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.set_debuglevel(1)  # Enable debug output
+        with email_service._create_connection() as server:
+            server.sendmail(email_service.user, to_email, msg.as_string())
         
-        # Send EHLO first
-        server.ehlo()
-        
-        if EMAIL_USE_TLS:
-            logger.info("Starting TLS...")
-            server.starttls()
-            # Send EHLO again after TLS
-            server.ehlo()
-        
-        # Login
-        logger.info(f"Logging in as {EMAIL_USER}")
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        
-        # Send message
-        logger.info("Sending message...")
-        text = msg.as_string()
-        server.sendmail(EMAIL_USER, to_email, text)
-        
-        logger.info(f"Confirmation email sent successfully to {to_email}")
         return True
-        
-    except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"Authentication failed: {e}")
-        logger.error("Check your Gmail app password or enable 2FA")
-        return False
-    except smtplib.SMTPRecipientsRefused as e:
-        logger.error(f"Recipient refused: {e}")
-        return False
-    except smtplib.SMTPException as e:
-        logger.error(f"SMTP error: {e}")
-        return False
     except Exception as e:
-        logger.error(f"Failed to send confirmation email: {e}")
+        logger.error(f"Legacy send_confirmation_email failed: {e}")
         return False
-    finally:
-        if server:
-            try:
-                server.quit()
-            except:
-                pass
 
-# Test function you can run to debug
+# Test function
+def test_email_configuration():
+    """Test the email configuration."""
+    email_service = EmailService()
+    try:
+        with email_service._create_connection() as server:
+            logger.info("Email configuration test successful!")
+            return True
+    except Exception as e:
+        logger.error(f"Email configuration test failed: {e}")
+        return False
+
 if __name__ == "__main__":
-    print("Testing email configuration...")
-    if test_email_connection():
-        print("Connection test passed!")
-        
-        # Test sending an email
-        test_result = send_confirmation_email(
-            "wchimapaka@gmail.com",  # Replace with your email
-            "Test Email",
-            "This is a test email from your chatbot."
-        )
-        
-        if test_result:
-            print("Test email sent successfully!")
-        else:
-            print("Failed to send test email")
+    # Test the configuration
+    if test_email_configuration():
+        print("Email configuration is working!")
     else:
-        print("Connection test failed!")
+        print("Email configuration needs fixing!")
