@@ -1,4 +1,6 @@
 import logging
+import psycopg2
+from contextlib import contextmanager
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine, and_
 from models import User, ChatMessage, Escalation, FAQ, UserState, ChatbotLog, Base
@@ -25,6 +27,30 @@ class DatabaseService:
     def __init__(self):
         # Ensure tables exist
         create_tables()
+        # Database connection parameters
+        self.db_params = {
+            'host': 'localhost',
+            'database': 'chatbot',
+            'user': 'postgres',
+            'password': 'wynn',
+            'options': '-c search_path=public'
+        }
+    
+    @contextmanager
+    def get_connection(self):
+        """Context manager for database connections"""
+        conn = None
+        try:
+            conn = psycopg2.connect(**self.db_params)
+            yield conn
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"Database connection error: {e}")
+            raise
+        finally:
+            if conn:
+                conn.close()
     
     def clean_phone_number(self, phone_number):
         """Convert phone numbers from scientific notation to standard format"""
@@ -182,6 +208,18 @@ class DatabaseService:
         finally:
             session.close()
     
+    def get_user_message_count(self, user_id):
+        """Get total message count for a user."""
+        session = SessionLocal()
+        try:
+            count = session.query(ChatMessage).filter_by(user_id=user_id).count()
+            return count
+        except Exception as e:
+            logger.error(f"Error getting user message count: {e}")
+            return 0
+        finally:
+            session.close()
+    
     def create_escalation(self, user_id, message):
         """Create a new escalation record with the message content."""
         session = SessionLocal()
@@ -221,6 +259,8 @@ class DatabaseService:
             escalation = session.query(Escalation).filter_by(id=escalation_id).first()
             if escalation:
                 escalation.status = status
+                if status == 'resolved':
+                    escalation.resolved_at = datetime.utcnow()
                 session.commit()
                 return True
             return False
@@ -317,10 +357,10 @@ class DatabaseService:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT id, user_id, message, is_response, created_at 
+                    SELECT id, user_id, message, is_response, timestamp 
                     FROM chat_messages 
                     WHERE user_id = %s AND is_response = FALSE
-                    ORDER BY created_at DESC 
+                    ORDER BY timestamp DESC 
                     LIMIT %s
                 """, (user_id, limit))
                 
@@ -332,7 +372,7 @@ class DatabaseService:
                         'user_id': row[1], 
                         'message': row[2],
                         'is_response': row[3],
-                        'created_at': row[4]
+                        'timestamp': row[4]
                     })()
                     messages.append(msg)
                 
@@ -341,51 +381,60 @@ class DatabaseService:
             logging.error(f"Error getting last user messages: {e}")
             return []
 
-def get_user_failure_count(self, user_id):
-    """Get the current failure count for a user."""
-    try:
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT failure_count FROM user_states 
-                WHERE user_id = %s
-            """, (user_id,))
+    def get_user_failure_count(self, user_id):
+        """Get the current failure count for a user."""
+        session = SessionLocal()
+        try:
+            user_state = session.query(UserState).filter_by(user_id=user_id).first()
+            if user_state and user_state.failure_count is not None:
+                return user_state.failure_count
+            return 0
+        except Exception as e:
+            logging.warning(f"Error getting user failure count: {e}")
+            return 0
+        finally:
+            session.close()
+
+    def set_user_failure_count(self, user_id, count):
+        """Set the failure count for a user using SQLAlchemy consistently."""
+        session = SessionLocal()
+        try:
+            user_state = session.query(UserState).filter_by(user_id=user_id).first()
             
-            result = cursor.fetchone()
-            return result[0] if result and result[0] is not None else 0
-    except Exception as e:
-        logging.warning(f"Error getting user failure count: {e}")
-        return 0
+            if user_state:
+                user_state.failure_count = count
+                user_state.updated_at = datetime.utcnow()
+            else:
+                # Create new user state with default state value
+                user_state = UserState(
+                    user_id=user_id,
+                    state='default',  # Provide default state to avoid null constraint
+                    failure_count=count
+                )
+                session.add(user_state)
+                
+            session.commit()
+            logger.info(f"Set failure count for user {user_id}: {count}")
+        except Exception as e:
+            session.rollback()
+            logging.warning(f"Error setting user failure count: {e}")
+        finally:
+            session.close()
 
-def set_user_failure_count(self, user_id, count):
-    """Set the failure count for a user."""
-    try:
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO user_states (user_id, failure_count, updated_at)
-                VALUES (%s, %s, NOW())
-                ON CONFLICT (user_id) 
-                DO UPDATE SET 
-                    failure_count = EXCLUDED.failure_count,
-                    updated_at = NOW()
-            """, (user_id, count))
-            conn.commit()
-    except Exception as e:
-        logging.warning(f"Error setting user failure count: {e}")
-
-def cleanup_inactive_user_states(self):
-    """Clean up user states for inactive users (older than 7 days)."""
-    try:
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                DELETE FROM user_states 
-                WHERE updated_at < NOW() - INTERVAL '7 days'
-            """)
-            deleted_count = cursor.rowcount
-            conn.commit()
+    def cleanup_inactive_user_states(self):
+        """Clean up user states for inactive users (older than 7 days)."""
+        session = SessionLocal()
+        try:
+            cutoff_date = datetime.utcnow() - timedelta(days=7)
+            deleted_count = session.query(UserState).filter(
+                UserState.updated_at < cutoff_date
+            ).delete()
+            session.commit()
+            logger.info(f"Cleaned up {deleted_count} inactive user states")
             return deleted_count
-    except Exception as e:
-        logging.error(f"Error cleaning up inactive user states: {e}")
-        return 0
+        except Exception as e:
+            session.rollback()
+            logging.error(f"Error cleaning up inactive user states: {e}")
+            return 0
+        finally:
+            session.close()

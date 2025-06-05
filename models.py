@@ -80,8 +80,9 @@ class UserState(Base):
     
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('public.users.id', ondelete='CASCADE'), unique=True, nullable=False)
-    state = Column(String(50), nullable=False)
+    state = Column(String(50), nullable=True)  # Made nullable to fix the constraint issue
     data = Column(Text)
+    failure_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
