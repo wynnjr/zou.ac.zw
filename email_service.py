@@ -76,7 +76,7 @@ class EmailService:
                             original_message, escalation_reason):
         """Send escalation email to IT support."""
         try:
-            subject = f"🚨 Chatbot Escalation - {user_name} (ID: {escalation_id})"
+            subject = f" Chatbot Escalation - {user_name} (ID: {escalation_id})"
             msg = self._create_base_message(IT_SUPPORT_EMAIL, subject, user_email)
 
             # Create detailed email body with better formatting
@@ -90,18 +90,18 @@ CHATBOT ESCALATION ALERT
    • Email: {user_email or 'Not provided'}
    • Escalation ID: {escalation_id}
 
-⚠️  Escalation Reason:
-   {escalation_reason}
+  Escalation Reason:
+  {escalation_reason}
 
-💬 Original User Message:
-   "{original_message}"
+Original User Message:
+"{original_message}"
 
-🔧 Action Required:
-   Please review the conversation history and contact the user promptly.
-   If user provided email, you can reply directly to this message.
+Action Required:
+Please review the conversation history and contact the user promptly.
+If user provided email, you can reply directly to this message.
 
-⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-🤖 System: ZOU IT Support Chatbot
+Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+System: ZOU IT Support Chatbot
 
 ---
 This is an automated message from the ZOU IT Support Chatbot System.
